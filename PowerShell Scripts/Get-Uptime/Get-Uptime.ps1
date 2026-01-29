@@ -53,7 +53,9 @@ function Get-ComputerUptime {
 }
 
 # Main script execution
-try {
+# Allow tests to disable main execution by setting environment variable SKIP_MAIN=1
+if (-not ($env:SKIP_MAIN -eq '1')) {
+    try {
     # Check if input file exists
     if (-not (Test-Path $inputFile)) {
         throw "Input file '$inputFile' not found."
@@ -92,10 +94,11 @@ try {
     Write-Host "Successful: $successCount"
     Write-Host "Failed: $errorCount"
     Write-Host "Report saved to: $outputFile"
-}
-catch {
-    Write-Error "An error occurred: $_"
-    exit 1
+    }
+    catch {
+        Write-Error "An error occurred: $_"
+        exit 1
+    }
 }
 
 <#
