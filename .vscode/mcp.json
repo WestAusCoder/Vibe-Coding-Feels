@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "mcp-etsy": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["Etsy-App-Dev/mcp-etsy/server.js"]
+    }
+  }
+}
