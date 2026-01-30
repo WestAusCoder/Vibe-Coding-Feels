@@ -15,43 +15,6 @@ $outputFile = "ComputerUptimeReport.csv"  # Output CSV file
 $minThreads = 3  # Minimum number of parallel threads
 $maxThreads = 5  # Maximum number of parallel threads
 
-# Function to get LastBootUpTime for a computer using CIM
-function Get-ComputerUptime {
-    param (
-        [string]$ComputerName
-    )
-
-    try {
-        # Get the CIM instance of Win32_OperatingSystem
-        $os = Get-CimInstance -ClassName Win32_OperatingSystem -ComputerName $ComputerName -ErrorAction Stop
-
-        # Convert the LastBootUpTime to a more readable format
-        $bootTime = $os.ConvertToDateTime($os.LastBootUpTime)
-
-        # Calculate uptime
-        $uptime = (Get-Date) - $bootTime
-
-        # Return an object with computer name and uptime
-        [PSCustomObject]@{
-            ComputerName = $ComputerName
-            LastBootUpTime = $bootTime
-            Uptime = $uptime
-            UptimeDays = [math]::Round($uptime.TotalDays, 2)
-            Status = "Success"
-        }
-    }
-    catch {
-        # If there's an error, return an object with error info
-        [PSCustomObject]@{
-            ComputerName = $ComputerName
-            LastBootUpTime = "Error"
-            Uptime = "Error"
-            UptimeDays = "Error"
-            Status = "Failed: $_"
-        }
-    }
-}
-
 # Main script execution
 # Allow tests to disable main execution by setting environment variable SKIP_MAIN=1
 if (-not ($env:SKIP_MAIN -eq '1')) {
@@ -75,6 +38,43 @@ if (-not ($env:SKIP_MAIN -eq '1')) {
 
     # Process computers in parallel with throttle limit
     $results = $computerNames | ForEach-Object -Parallel {
+        # Define the function inside the parallel block
+        function Get-ComputerUptime {
+            param (
+                [string]$ComputerName
+            )
+
+            try {
+                # Get the CIM instance of Win32_OperatingSystem
+                $os = Get-CimInstance -ClassName Win32_OperatingSystem -ComputerName $ComputerName -ErrorAction Stop
+
+                # Convert the LastBootUpTime to a more readable format
+                $bootTime = $os.ConvertToDateTime($os.LastBootUpTime)
+
+                # Calculate uptime
+                $uptime = (Get-Date) - $bootTime
+
+                # Return an object with computer name and uptime
+                [PSCustomObject]@{
+                    ComputerName = $ComputerName
+                    LastBootUpTime = $bootTime
+                    Uptime = $uptime
+                    UptimeDays = [math]::Round($uptime.TotalDays, 2)
+                    Status = "Success"
+                }
+            }
+            catch {
+                # If there's an error, return an object with error info
+                [PSCustomObject]@{
+                    ComputerName = $ComputerName
+                    LastBootUpTime = "Error"
+                    Uptime = "Error"
+                    UptimeDays = "Error"
+                    Status = "Failed: $_"
+                }
+            }
+        }
+
         $result = Get-ComputerUptime -ComputerName $_
         Write-Output $result
     } -ThrottleLimit $maxThreads
