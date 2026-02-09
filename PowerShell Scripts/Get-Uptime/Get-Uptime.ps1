@@ -31,22 +31,27 @@ if (-not ($env:SKIP_MAIN -eq '1')) {
         throw "No computer names found in the input file."
     }
 
-    Write-Host "Starting parallel processing of $($computerNames.Count) computers with $minThreads-$maxThreads threads..."
+    Write-Host "Starting parallel processing of $($computerNames.Count) computers with $maxThreads threads...`n"
 
-    # Initialize results array
-    $results = @()
+    # Define function once (outside parallel block for efficiency)
+    function Get-ComputerUptime {
+        param (
+            [string]$ComputerName,
+            [int]$OperationTimeoutSec = 10
+        )
 
-    # Process computers in parallel with throttle limit
-    $results = $computerNames | ForEach-Object -Parallel {
-        # Define the function inside the parallel block
-        function Get-ComputerUptime {
-            param (
-                [string]$ComputerName
-            )
+        try {
+            # Create CIM session with timeout
+            $cimSession = New-CimSession -ComputerName $ComputerName `
+                -OperationTimeoutSec $OperationTimeoutSec `
+                -ErrorAction Stop
 
             try {
-                # Get the CIM instance of Win32_OperatingSystem
-                $os = Get-CimInstance -ClassName Win32_OperatingSystem -ComputerName $ComputerName -ErrorAction Stop
+                # Get the CIM instance of Win32_OperatingSystem with timeout
+                $os = Get-CimInstance -ClassName Win32_OperatingSystem `
+                    -CimSession $cimSession `
+                    -OperationTimeoutSec $OperationTimeoutSec `
+                    -ErrorAction Stop
 
                 # Convert the LastBootUpTime to a more readable format
                 $bootTime = $os.ConvertToDateTime($os.LastBootUpTime)
@@ -63,27 +68,58 @@ if (-not ($env:SKIP_MAIN -eq '1')) {
                     Status = "Success"
                 }
             }
-            catch {
-                # If there's an error, return an object with error info
-                [PSCustomObject]@{
-                    ComputerName = $ComputerName
-                    LastBootUpTime = "Error"
-                    Uptime = "Error"
-                    UptimeDays = "Error"
-                    Status = "Failed: $_"
+            finally {
+                # Clean up CIM session
+                if ($cimSession) {
+                    Remove-CimSession -CimSession $cimSession -ErrorAction SilentlyContinue
                 }
             }
         }
+        catch {
+            # If there's an error, return an object with error info
+            [PSCustomObject]@{
+                ComputerName = $ComputerName
+                LastBootUpTime = "Error"
+                Uptime = "Error"
+                UptimeDays = "Error"
+                Status = "Failed: $_"
+            }
+        }
+    }
 
+    # Process computers in parallel with throttle limit and progress reporting
+    $count = 0
+    $total = $computerNames.Count
+    
+    # Pass the function definition into the parallel scope
+    $functionDef = ${function:Get-ComputerUptime}
+    
+    $results = $computerNames | ForEach-Object -Parallel {
+        # Recreate function in parallel scope (passed via $using)
+        Set-Item -Path Function:Get-ComputerUptime -Value $using:functionDef
+        
+        # Increment counter for progress tracking
+        $count = [System.Threading.Interlocked]::Increment([ref]$using:count)
+        
+        # Report progress
+        Write-Progress -Activity "Checking Computer Uptime" `
+            -Status "Processing: $_" `
+            -PercentComplete (($count / $using:total) * 100) `
+            -Id 1
+        
+        # Call function
         $result = Get-ComputerUptime -ComputerName $_
         Write-Output $result
     } -ThrottleLimit $maxThreads
 
-    # Sort results by computer name (optional)
-    $results = $results | Sort-Object ComputerName
+    # Close progress bar
+    Write-Progress -Activity "Checking Computer Uptime" -Completed -Id 1
 
-    # Export results to CSV
-    $results | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+    # Convert results to array for summary statistics
+    $results = @($results)
+    
+    # Export results to CSV (sorted by computer name)
+    $results | Sort-Object ComputerName | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
 
     # Display summary
     $successCount = ($results | Where-Object { $_.Status -like "Success*" }).Count
